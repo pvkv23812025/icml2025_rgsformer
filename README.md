@@ -1,11 +1,5 @@
-# [AAAI 2025] GraphMoRE: Mitigating Topological Heterogeneity via Mixture of Riemannian Experts
-
-
-This repository is the official implementation of "GraphMoRE: Mitigating Topological Heterogeneity via Mixture of Riemannian Experts" accepted by the Main Technical Track of the 39th Annual AAAI Conference on Artificial Intelligence (AAAI-2025).
-
-<p align="center">
-<img src="Framework.png" width="100%" class="center" alt="logo"/>
-</p>
+# R-SGFormer (GraphMORE embedding for SGFormer) 
+GraphMoRE: Mitigating Topological Heterogeneity via Mixture of Riemannian Experts
 
 -----
 
@@ -43,9 +37,7 @@ Or:
 bash scripts/NC/sage/photo.sh
 ```
 
-### Citation
-If you find this repository helpful, please consider citing the following paper. We welcome any discussions with [guozh@act.buaa.edu.cn](mailto:guozh@act.buaa.edu.cn).
-
+GraphMORE citation
 ```bibtex
 @article{guo2024graphmore,
   title={GraphMoRE: Mitigating Topological Heterogeneity via Mixture of Riemannian Experts},
@@ -55,5 +47,13 @@ If you find this repository helpful, please consider citing the following paper.
 }
 ```
 
-### Acknowledgements
-Part of this code is inspired by [MotifRGC](https://github.com/RiemannGraph/MotifRGC), [ACE-HGNN](https://github.com/RingBDStack/ACE-HGNN) and [HGCN](https://github.com/HazyResearch/hgcn). We owe sincere thanks to their valuable efforts and contributions.
+
+@inproceedings{
+  wu2023sgformer,
+  title={SGFormer: Simplifying and Empowering Transformers for Large-Graph Representations},
+  author={Qitian Wu and Wentao Zhao and Chenxiao Yang and Hengrui Zhang and Fan Nie and Haitian Jiang and Yatao Bian and Junchi Yan},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2023}
+  }
+
+  ```
