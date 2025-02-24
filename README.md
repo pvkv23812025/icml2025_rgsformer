@@ -46,7 +46,8 @@ GraphMORE citation
 }
 ```
 
-
+SGFormer citation
+```bibtex
 @inproceedings{
   wu2023sgformer,
   title={SGFormer: Simplifying and Empowering Transformers for Large-Graph Representations},
