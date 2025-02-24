@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from models import *
 from backbone import GNNClassifier
-from ours_machine import SGFormer
+from colab_ours_machine import SGFormer
 from utils import cal_accuracy, cal_F1, cal_AUC_AP, cal_shortest_dis
 from data_factory import load_data, mask_edges, load_synthetic_data
 from logger import create_logger
