@@ -1,5 +1,4 @@
 # R-SGFormer (GraphMORE embedding for SGFormer) 
-GraphMoRE: Mitigating Topological Heterogeneity via Mixture of Riemannian Experts
 
 -----
 
