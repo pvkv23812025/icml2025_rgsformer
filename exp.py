@@ -4,9 +4,11 @@ import torch.nn.functional as F
 import torch.nn as nn
 from models import *
 from backbone import GNNClassifier
+from ours_machine import SGFormer
 from utils import cal_accuracy, cal_F1, cal_AUC_AP, cal_shortest_dis
 from data_factory import load_data, mask_edges, load_synthetic_data
 from logger import create_logger
+from torch_geometric.nn import GCNConv
 from geoopt.optim import RiemannianAdam
 import time
 import os
@@ -40,7 +42,7 @@ class Exp:
         self.edge_index = edge_index
         self.neg_edge = neg_edge
         self.features = features
-        self.dis_shortest = cal_shortest_dis(self.edge_index, features.shape[0])
+        self.dis_shortest = cal_shortest_dis(self.edge_index)
 
         val_prop = 0.05
         test_prop = 0.1
@@ -102,8 +104,8 @@ class Exp:
             logger.info(f"test AUC: {np.mean(aucs)}~{np.std(aucs)}")
             logger.info(f"test AP: {np.mean(aps)}~{np.std(aps)}")
 
-    def cal_cls_loss(self, model, edge_index, mask, features, labels):
-        out = model(features, edge_index)
+    def cal_cls_loss(self, model, edge_index, mask, features, gnn_features, embeddings, labels):
+        out = model(features, gnn_features, embeddings, edge_index)
         loss = F.cross_entropy(out[mask], labels[mask])
         acc = cal_accuracy(out[mask], labels[mask])
         weighted_f1, macro_f1 = cal_F1(out[mask].detach().cpu(), labels[mask].detach().cpu())
@@ -113,18 +115,25 @@ class Exp:
         """masks = (train, val, test)"""
         self.configs.coef_dis = 1e-4
         d = self.configs.num_factors_cls * self.configs.embed_features
-        ############################################# Add SGFormer here
-        model_cls = GNNClassifier(backbone=self.configs.backbone, n_layers=2, in_features=self.in_features + d,
-                                    hidden_features=self.configs.hidden_features_cls, out_features=self.n_classes,
-                                    n_heads=self.configs.n_heads, drop_edge=self.configs.drop_edge_cls, 
-                                    drop_node=self.configs.drop_cls).to(self.device)
-        ############################################# Add SGFormer here
+        """
+        def __init__(self, in_channels, hidden_channels, out_channels, num_layers=2, num_heads=1, 
+                 alpha=0.5, dropout=0.5, use_bn=True, use_residual=True, use_weight=True, use_graph=True, use_act=False, graph_weight=0.8, gnn=None, aggregate='add'):
+        """
+        gnn = GCN(in_channels=self.in_features + d,
+                    hidden_channels=self.configs.hidden_features,
+                    out_channels=self.n_classes,
+                    num_layers=4,
+                    dropout=0.4,
+                    use_bn=True).to(self.device)
+        model_cls = SGFormer(in_channels=self.in_features + d,in_gnn_channels=self.in_features,in_embed_features=d,hidden_channels=self.configs.hidden_features,out_channels=self.n_classes,num_layers=1,num_heads=1,alpha=0.5, dropout=0.2, use_bn=True, use_residual=True, use_weight=True, use_graph=True, use_act=False, graph_weight=0.9,gnn=gnn, aggregate='add').to(self.device)
         optimizer_cls = torch.optim.Adam(model_cls.parameters(), lr=self.configs.lr_cls, weight_decay=self.configs.w_decay_cls)
         r_optim = RiemannianAdam(model.parameters(), lr=self.configs.lr_Riemann, weight_decay=self.configs.w_decay, stabilize=100)
         optimizer_gating = torch.optim.Adam(model_gating.parameters(), lr=self.configs.lr_gating, weight_decay=self.configs.w_decay_gating)
-        best_acc = 0.
+        best_acc = 0
         best_epoch = 0
         early_stop_count = 0
+        prev_embeddings = 0
+        prev_expert_wts = 0
         for epoch in range(self.configs.epochs_cls + 1):
             now_time = time.time()
             model_cls.train()
@@ -133,19 +142,21 @@ class Exp:
             optimizer_cls.zero_grad()
             r_optim.zero_grad()
             optimizer_gating.zero_grad()
-            
             embeddings = model.encode(self.features, self.edge_index, self.configs.dataset)
+            prev_embeddings = embeddings
+            
             experts_weight, loss_distortion = model_gating(self.subgraph_feature, self.subgraph_edge_index, self.subgraph_batch, embeddings, self.dis_shortest, self.configs.embed_features, self.edge_index)
-
             experts_weight = experts_weight.repeat_interleave(self.configs.embed_features, dim=1)
+            prev_expert_wts = experts_weight
             embeddings = embeddings * experts_weight
 
             features = torch.concat([self.features, embeddings], -1)
 
-            loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[0], features, self.labels)
+            loss, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[0], features, self.features, embeddings, self.labels)
             loss = loss + self.configs.coef_dis * loss_distortion 
 
             loss.backward()
+            torch.nn.utils.clip_grad_value_(model_cls.parameters(), clip_value=1.0)
             optimizer_cls.step()
             r_optim.step()
             optimizer_gating.step()
@@ -160,15 +171,21 @@ class Exp:
                 experts_weight = model_gating(self.subgraph_feature, self.subgraph_edge_index, self.subgraph_batch)
                 experts_weight = experts_weight.repeat_interleave(self.configs.embed_features, dim=1)
                 embeddings = embeddings * experts_weight
+                mean = 0
+                std_dev = 0.1  # Standard deviation of the noise
+                # Generate Gaussian noise
+                #noise = np.random.normal(mean, std_dev, self.features.shape)
+                #noise = torch.tensor(noise, dtype=torch.float32, device='cuda')
+                #self.features = self.features + noise
                 features = torch.concat([self.features, embeddings], -1)
-                _, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[1], features, self.labels)
+                _, acc, weighted_f1, macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[1], features, self.features, embeddings, self.labels)
                 logger.info(f"Epoch {epoch}: val_accuracy={acc}, val_wf1={weighted_f1}, val_mf1={macro_f1}")
                 if acc > best_acc:
                     best_acc = acc
                     best_epoch = epoch
                     early_stop_count = 0
                     # Test
-                    _, test_acc, test_weighted_f1, test_macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[2], features, self.labels)
+                    _, test_acc, test_weighted_f1, test_macro_f1 = self.cal_cls_loss(model_cls, self.edge_index, self.masks[2], features, self.features, embeddings, self.labels)
                 else:
                     early_stop_count += 1
                     if early_stop_count > self.configs.patience_cls:
@@ -243,4 +260,54 @@ class Exp:
 
         return test_auc, test_ap, best_epoch
             
+class GCN(nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers=2,
+                 dropout=0.5, save_mem=True, use_bn=True):
+        super(GCN, self).__init__()
+
+        self.convs = nn.ModuleList()
+        # self.convs.append(
+        #     GCNConv(in_channels, hidden_channels, cached=not save_mem, normalize=not save_mem))
+        self.convs.append(
+            GCNConv(in_channels, hidden_channels, cached=not save_mem))
+
+        self.bns = nn.ModuleList()
+        self.bns.append(nn.BatchNorm1d(hidden_channels))
+        for _ in range(num_layers - 2):
+            # self.convs.append(
+            #     GCNConv(hidden_channels, hidden_channels, cached=not save_mem, normalize=not save_mem))
+            self.convs.append(
+                GCNConv(hidden_channels, hidden_channels, cached=not save_mem))
+            self.bns.append(nn.BatchNorm1d(hidden_channels))
+
+        # self.convs.append(
+        #     GCNConv(hidden_channels, out_channels, cached=not save_mem, normalize=not save_mem))
+        self.convs.append(
+            GCNConv(hidden_channels, out_channels, cached=not save_mem))
+
+        self.dropout = dropout
+        self.activation = F.relu
+        self.use_bn = use_bn
+
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+        for bn in self.bns:
+            bn.reset_parameters()
+
+    def forward(self, data):
+        x = data['graph']['node_feat']
+        edge_index=data['graph']['edge_index']
+        edge_weight=data['graph']['edge_weight'] if 'edge_weight' in data['graph'] else None
+        for i, conv in enumerate(self.convs[:-1]):
+            if edge_weight is None:
+                x = conv(x, edge_index)
+            else:
+                x=conv(x,edge_index,edge_weight)
+            if self.use_bn:
+                x = self.bns[i](x)
+            x = self.activation(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.convs[-1](x, data['graph']['edge_index'])
+        return x
         
